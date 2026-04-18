@@ -1,0 +1,67 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Primitives & Helpers
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function isAdmin() { return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+
+    // 3. Entity Validators
+    function isValidUser(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.email is string && data.email.size() > 5 &&
+             data.role in ['user', 'admin'] &&
+             data.balance is number && data.balance >= 0 &&
+             data.blocked is bool;
+    }
+
+    function isValidTransaction(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.type in ['deposit', 'invest', 'withdraw'] &&
+             data.amount is number && data.amount > 0 &&
+             data.date == request.time;
+    }
+
+    // 4. Collection Rules
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin(); // Only admins can list users
+      
+      allow create: if isOwner(userId) && 
+                      isValidUser(incoming()) && 
+                      incoming().role == 'user' && 
+                      incoming().balance == 0 && 
+                      incoming().blocked == false;
+
+      allow update: if (isOwner(userId) || isAdmin()) && isValidUser(incoming()) && (
+        // Admin Update: Can change blocked status or role
+        (isAdmin() && incoming().diff(existing()).affectedKeys().hasAny(['blocked', 'role'])) ||
+        // User Update: Can change balance (via deposit/invest) or name
+        (isOwner(userId) && !existing().blocked && incoming().diff(existing()).affectedKeys().hasOnly(['balance', 'name', 'updatedAt']) && incoming().role == existing().role && incoming().blocked == existing().blocked)
+      );
+    }
+
+    match /transactions/{transactionId} {
+      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      
+      allow create: if isSignedIn() && isValidTransaction(incoming()) && 
+                       !get(/databases/$(database)/documents/users/$(request.auth.uid)).data.blocked;
+      
+      allow update, delete: if false; // Transactions are immutable
+    }
+
+    match /admins/{adminId} {
+      allow read: if isSignedIn(); // Basic check to see if one is admin
+      allow write: if false; // Admins managed via console or bootstrap
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Enterprise Investment System",
+  "description": "A full-stack enterprise investment and balance management system with user roles, deposit/invest features, and an admin dashboard for user oversight and transaction reporting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
